@@ -91,13 +91,13 @@ def login_user(user: UserLogin):
         )
 
     
-@user_router.get("/logout")
-def logout_user(response: Response):
-    try:
-        response.delete_cookie("user_id")
-        return {"message": "Logout successful."}
-    except Exception as e:
-        return {"error": str(e)}
+# @user_router.get("/logout")
+# def logout_user(response: Response):
+#     try:
+#         response.delete_cookie("user_id")
+#         return {"message": "Logout successful."}
+#     except Exception as e:
+#         return {"error": str(e)}
     
 
 
@@ -107,8 +107,9 @@ class User(BaseModel):
     email: str
 
 
-def verify_user(request: Request) -> User:
-    user_id = request.cookies.get("user_id")
+async def verify_user(request: Request) -> User:
+    requset_data = await request.json()
+    user_id = requset_data.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="User not authenticated.")
     user = db[user_collection].find_one({"_id": ObjectId(user_id)})
@@ -117,100 +118,85 @@ def verify_user(request: Request) -> User:
     user['id'] = str(user['_id']) # Convert ObjectId to string
     user = User(**user)
     return user
+
+
+# export async function saveToGalleryAPI(
+#   uid: string,
+#   artName: string,
+#   description: string, 
+#   prompt: string,
+#   animal: string, 
+#   orignalImageUrl: string, 
+#   maskedImageUrl: string, 
+#   finalImageUrl: string
+# ) {
+#   const response = await fetch(`${USER_BACKEND}/user/save`, {
+#     method: "POST",
+#     headers: {
+#       "Content-Type": "application/json",
+#     },
+#     credentials: "include",
+#     body: JSON.stringify({
+#       user_id: uid,
+#       art_name: artName,
+#       description,
+#       prompt,
+#       animal,
+#       orignal_image_url: orignalImageUrl,
+#       masked_image_url: maskedImageUrl,
+#       final_image_url: finalImageUrl,
+#     }),
+#   });
+#   if (!response.ok) {
+#     const errorData = await response.json();
+#     throw new Error(errorData.detail || "Failed to save to gallery");
+#   }
+#   return response;
+# }
     
+from datetime import datetime, timezone
 
-
-@user_router.post("/save_image")
-async def save_image(
-    request: Request,
-    image: UploadFile = File(...),
-    description: str = Form(...),  # ✅ Receive description from form data
-    user: User = Depends(verify_user)
-):
+@user_router.post("/save")
+async def save_artwork(request: Request, user: User = Depends(verify_user)):
     try:
-        # Ensure ./storage exists
-        os.makedirs("./storage", exist_ok=True)
-        print("Storage directory is ready.")
+        data = await request.json()
+        art_name = data.get("art_name")
+        description = data.get("description")
+        prompt = data.get("prompt")
+        animal = data.get("animal")
+        orignal_image_url = data.get("orignal_image_url")
+        masked_image_url = data.get("masked_image_url")
+        final_image_url = data.get("final_image_url")
 
-        if not image.filename:
-            raise HTTPException(status_code=400, detail="File name is required.")
+        if not all([art_name, description, prompt, animal, orignal_image_url, masked_image_url, final_image_url]):
+            raise HTTPException(status_code=400, detail="All fields are required.")
 
-        # Define file path
-        file_location = f"./storage/{user.id + '_' + image.filename}"
-
-        # Save the image to disk
-        with open(file_location, "wb") as buffer:
-            shutil.copyfileobj(image.file, buffer)
-
-        # Find user in the DB
-        existing_user = db[user_collection].find_one({"_id": ObjectId(user.id)})
-        if not existing_user:
-            raise HTTPException(status_code=404, detail="User not found.")
-
-        # Create image object
-        image_entry = {
-            "fname": image.filename,
-            "description": description
+        artwork_data = {
+            "user_id": user.id,
+            "art_name": art_name,
+            "description": description,
+            "prompt": prompt,
+            "animal": animal,
+            "orignal_image_url": orignal_image_url,
+            "masked_image_url": masked_image_url,
+            "final_image_url": final_image_url,
+            "created_at": datetime.now(timezone.utc)
         }
 
-        # Append to the "images" array field (create it if it doesn't exist)
-        db[user_collection].update_one(
-            {"_id": ObjectId(user.id)},
-            {"$push": {"images": image_entry}}
+        db['gallery'].insert_one(artwork_data)
+
+        return JSONResponse(
+            content={"message": "Artwork saved successfully.", "code": 201},
+            status_code=201
         )
 
-        return {"message": "Image saved successfully.", "image": image_entry}
-
+    except HTTPException as e:
+        return JSONResponse(
+            content={"detail": e.detail, "code": e.status_code},
+            status_code=e.status_code
+        )
     except Exception as e:
-        return {"error": str(e)}
-    
-from fastapi.responses import FileResponse
-
-@user_router.get("/s/{filename}")
-async def get_image(
-    filename: str,
-    user: User = Depends(verify_user)
-):
-    try:
-        # Ensure user exists
-        existing_user = db[user_collection].find_one({"_id": ObjectId(user.id)})
-        if not existing_user:
-            raise HTTPException(status_code=404, detail="User not found.")
-
-        # Check if the image exists in the user's image list
-        images = existing_user.get("images", [])
-        match = next((img for img in images if img["fname"] == filename), None)
-
-        if not match:
-            raise HTTPException(status_code=404, detail="Image not found for this user.")
-
-        # Construct the full file path
-        file_path = f"./storage/{user.id}_{filename}"
-
-        # Check if file exists on disk
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="Image file not found on disk.")
-
-        return FileResponse(file_path, media_type="image/*", filename=filename)
-
-    except Exception as e:
-        return {"error": str(e)}
-
-@user_router.get("/images")
-async def get_all_image_metadata(
-    user: User = Depends(verify_user)
-):
-    try:
-        # Fetch the user from the database
-        existing_user = db[user_collection].find_one({"_id": ObjectId(user.id)})
-
-        if not existing_user:
-            raise HTTPException(status_code=404, detail="User not found.")
-
-        # Retrieve the images list, default to empty list
-        images = existing_user.get("images", [])
-
-        return {"images": images}
-
-    except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(
+            content={"error": str(e), "code": 500},
+            status_code=500
+        )
