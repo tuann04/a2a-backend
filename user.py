@@ -120,39 +120,6 @@ async def verify_user(request: Request) -> User:
     return user
 
 
-# export async function saveToGalleryAPI(
-#   uid: string,
-#   artName: string,
-#   description: string, 
-#   prompt: string,
-#   animal: string, 
-#   orignalImageUrl: string, 
-#   maskedImageUrl: string, 
-#   finalImageUrl: string
-# ) {
-#   const response = await fetch(`${USER_BACKEND}/user/save`, {
-#     method: "POST",
-#     headers: {
-#       "Content-Type": "application/json",
-#     },
-#     credentials: "include",
-#     body: JSON.stringify({
-#       user_id: uid,
-#       art_name: artName,
-#       description,
-#       prompt,
-#       animal,
-#       orignal_image_url: orignalImageUrl,
-#       masked_image_url: maskedImageUrl,
-#       final_image_url: finalImageUrl,
-#     }),
-#   });
-#   if (!response.ok) {
-#     const errorData = await response.json();
-#     throw new Error(errorData.detail || "Failed to save to gallery");
-#   }
-#   return response;
-# }
     
 from datetime import datetime, timezone
 
@@ -164,11 +131,11 @@ async def save_artwork(request: Request, user: User = Depends(verify_user)):
         description = data.get("description")
         prompt = data.get("prompt")
         animal = data.get("animal")
-        orignal_image_url = data.get("orignal_image_url")
+        original_image_url = data.get("original_image_url")
         masked_image_url = data.get("masked_image_url")
         final_image_url = data.get("final_image_url")
 
-        if not all([art_name, description, prompt, animal, orignal_image_url, masked_image_url, final_image_url]):
+        if not all([art_name, description, prompt, animal, original_image_url, masked_image_url, final_image_url]):
             raise HTTPException(status_code=400, detail="All fields are required.")
 
         artwork_data = {
@@ -177,7 +144,7 @@ async def save_artwork(request: Request, user: User = Depends(verify_user)):
             "description": description,
             "prompt": prompt,
             "animal": animal,
-            "orignal_image_url": orignal_image_url,
+            "original_image_url": original_image_url,
             "masked_image_url": masked_image_url,
             "final_image_url": final_image_url,
             "created_at": datetime.now(timezone.utc)
@@ -194,6 +161,32 @@ async def save_artwork(request: Request, user: User = Depends(verify_user)):
         return JSONResponse(
             content={"detail": e.detail, "code": e.status_code},
             status_code=e.status_code
+        )
+    except Exception as e:
+        return JSONResponse(
+            content={"error": str(e), "code": 500},
+            status_code=500
+        )
+    
+@user_router.get("/gallery/{user_id}")
+async def get_user_gallery(user_id: str):
+    try:
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User not authenticated.")
+        user = db[user_collection].find_one({"_id": ObjectId(user_id)})
+        if not user:
+            raise HTTPException(status_code=401, detail="User not authenticated.")
+        
+        gallery_items = list(db['gallery'].find({"user_id": user_id}))
+        
+        print(gallery_items[0].get("created_at"))
+        for item in gallery_items:
+            item['_id'] = str(item['_id'])
+            item['created_at'] = str(item['created_at'].date().isoformat()
+)
+        return JSONResponse(
+            content={"gallery": gallery_items, "code": 200},
+            status_code=200
         )
     except Exception as e:
         return JSONResponse(
