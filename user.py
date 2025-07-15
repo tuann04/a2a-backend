@@ -1,8 +1,12 @@
 from fastapi import APIRouter, Request, Response, HTTPException, Depends, UploadFile, File, Form
+from fastapi.responses import JSONResponse
 from db import db
 from pydantic import BaseModel
 from bson.objectid import ObjectId
 import os
+# load dotenv
+from dotenv import load_dotenv
+load_dotenv()
 import shutil
 
 user_router = APIRouter()
@@ -25,11 +29,26 @@ def register_user(user: UserCreate):
         existing_user = db[user_collection].find_one({"email": user.email})
         if existing_user:
             raise HTTPException(status_code=400, detail="User already exists with this email.")
+
         # Insert the new user into the database
         db[user_collection].insert_one(user.model_dump())
-        return {"message": "User registered successfully."}
+
+        return JSONResponse(
+            content={"message": "User registered successfully.", "code": 201},
+            status_code=201
+        )
+
+    except HTTPException as e:
+        return JSONResponse(
+            content={"detail": e.detail, "code": e.status_code},
+            status_code=e.status_code
+        )
+
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(
+            content={"error": str(e), "code": 500},
+            status_code=500
+        )
 
 
 class UserLogin(BaseModel):
@@ -37,19 +56,40 @@ class UserLogin(BaseModel):
     password: str
 
 @user_router.post("/login")
-def login_user(user: UserLogin, response: Response):
+def login_user(user: UserLogin):
     try:
-        # Check if the user exists
         existing_user = db[user_collection].find_one({"email": user.email})
-        if not existing_user:
+        if not existing_user or existing_user.get("password") != user.password:
             raise HTTPException(status_code=404, detail="Invalid email or password.")
-        # Check if the password matches
-        if existing_user.get("password") != user.password:
-            raise HTTPException(status_code=404, detail="Invalid email or password.")
-        response.set_cookie(key="user_id", value=str(existing_user.get("_id")), httponly=True, secure=True, samesite='none')
-        return {"message": "Login successful."}
+
+        # ✅ Set cookie
+        response = JSONResponse(
+            content={"message": "Login successful.", "user_id": str(existing_user.get("_id"))},
+            status_code=200
+        )
+        # response.set_cookie(
+        #     key="user_id",
+        #     value=str(existing_user.get("_id")),
+        #     httponly=True,
+        #     secure=False,
+        #     samesite='lax'
+        # )
+        return response
+        
+
+    except HTTPException as e:
+        # Automatically handled by FastAPI, but you can wrap it like this:
+        return JSONResponse(
+            content={"detail": e.detail, "code": e.status_code},
+            status_code=e.status_code
+        )
     except Exception as e:
-        return {"error": str(e)}
+        # Unexpected server errors
+        return JSONResponse(
+            content={"error": str(e), "code": 500},
+            status_code=500
+        )
+
     
 @user_router.get("/logout")
 def logout_user(response: Response):
